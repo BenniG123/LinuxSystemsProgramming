@@ -1,0 +1,194 @@
+#include <unistd.h>
+#include <stdio.h>
+#include <string.h>
+#include <stdlib.h>
+
+int main( int argc, const char* argv[] )
+{
+
+	char *usageString = "You're doing it wrong!\n";
+	int first = 1;
+	int status;
+	int correct = 0;
+	if(argc != 2) {
+		printf(usageString);
+		return 0;
+	}
+
+	int length = strlen(argv[1]);
+
+		FILE *fr;
+		//Attempt to open input shell script
+		if((fr = fopen(argv[1], "r")) == NULL) {
+			//Something went wrong
+			perror("File reading error");
+			return -1;
+		}
+
+		//Buffer for reading the input file
+		char line[80];
+
+		//Interpret the program
+		while(fgets(line, 80, fr) != NULL) {
+	 		//printf ("%s", line);
+			//Determine if we are reading a bash file
+			if(strncmp(line, "#! /bin/bash",12) != 0 && first) {
+				printf("You must preface a bash script with '#! /bin/bash'\n");
+				return 0;
+			} else if(strncmp(line, "#! /bin/bash",12) == 0 && first) {
+				//We no longer need to check, set first to 0
+				first = 0;
+			}
+			//Determine command
+			if(line[0] == 35 || line[0] == 10) {
+				//printf("Comment or blank line\n");
+				continue;
+			}
+
+			//Parse command
+			int firstSpace = -1;
+			int argLength = -1;
+			int lineLength = strlen(line);
+			int counter = 0;
+			while(counter < lineLength) {
+				if(line[counter] == 32) {
+					firstSpace = counter;
+					break;
+				}
+				counter++;
+			}
+
+			char *commandBuffer;
+			char *argBuffer;
+
+			if(firstSpace == -1) {
+				//No space has been found, single word command
+				strcpy(commandBuffer, line);
+			} else {
+
+			//Command will be stored in commandBuffer
+			commandBuffer = malloc(firstSpace + 1);
+			strncpy(commandBuffer, line, firstSpace);
+
+			//Argument will be stored in argBuffer
+			argLength = lineLength - firstSpace - 1;
+
+			//Malloc - Use it for dynamic memory allocation fool
+			argBuffer = malloc(argLength + 1);
+			strncpy(argBuffer, line + firstSpace + 1, argLength);
+			}
+
+			//Fork and create task asynchronously, then exit with [process_id] exit_status       command
+			if(argBuffer[argLength-2] == '&') {
+				argBuffer[argLength - 2] = '\0';
+				argLength = argLength - 2;
+				pid_t child;
+				child = fork();
+				if(child == 0) {
+					execlp(commandBuffer, argBuffer);
+				} else if(child > 0) {
+					wait(&status);
+					printf("[%d] %d		%s\n", child, status, commandBuffer);
+					continue;
+				}
+			 	else {
+					// fork failed, handle error here
+					perror("fork");
+				}
+			}
+			
+
+			//What to do in each command
+			if(strncmp(commandBuffer, "echo",4) == 0 && firstSpace != -1) {
+				//Print out regular string
+				if(argBuffer[0] == '\"' && argBuffer[argLength - 2] == '\"') {
+					char echoBuffer[argLength-2];
+					strncpy(echoBuffer, line + firstSpace + 2, argLength-3);
+					echoBuffer[argLength-3] = '\0';
+					printf("%s\n", echoBuffer);
+					continue;
+				} //Print out environment variable
+				else if(argBuffer[0] == '$') {
+					char envArg[argLength - 1];
+					strncpy(envArg, argBuffer + 1, argLength - 1);
+					envArg[argLength - 2] = '\0';
+					char * env = getenv(envArg);
+					if(env != NULL) {
+						printf("%s\n", env);
+					} else {
+						printf("Environment Variable doesn't exist!\n");
+					}
+					continue;
+				}
+				else {
+					printf("Argument must be encapsulated in double quotes or prefaced by $\n");
+					continue;
+				}
+			} else if(strncmp(commandBuffer, "pwd",3) == 0) {
+				char pwd[1024];
+				if(getcwd(pwd, sizeof(pwd)) != NULL) {
+					printf("%s\n", pwd);
+				}
+				continue;
+			} else if(strncmp(commandBuffer, "export",6) == 0) {
+				char * equals = strchr(argBuffer, '=');
+				char * addDolla = strchr(argBuffer, '$');
+				char * addColon = strchr(argBuffer, ':');
+				int equalsLength = strlen(equals);
+				//Try and add new env variable
+				if(equals != NULL && addDolla == NULL) {
+					char envValue[80];
+					strncpy(envValue, equals + 1, equalsLength-1);
+					envValue[equalsLength-2] = '\0';
+					char envName[80];
+					strncpy(envName, argBuffer, argLength - equalsLength);
+					envName[argLength - equalsLength] = '\0';
+					if(setenv(envName, envValue, 1) < 0 ) {
+						perror("Export failed");
+						continue;
+					}
+				} //Append env variable 
+				else if(equals != NULL && addDolla != NULL) {
+					char envName[80];
+					strncpy(envName, argBuffer, argLength - equalsLength);
+					envName[argLength - equalsLength] = '\0';
+
+					char appendEnvName[80];
+					strncpy(appendEnvName, addDolla + 1, strlen(addDolla) - strlen(addColon) - 1);
+					appendEnvName[strlen(addDolla) - strlen(addColon) - 1] = '\0';
+
+					char *envValue = getenv(appendEnvName);
+					
+					char appendString[80];
+					strncpy(appendString, addColon, strlen(addColon));
+					appendString[strlen(addColon)] = '\0';
+					
+					strcat(envValue, appendString);
+					if(setenv(envName, envValue, 1) < 0 ) {
+						perror("Export failed");
+						continue;
+					}
+				}
+				continue;
+			} else if(strncmp(commandBuffer, "cd", 2) == 0) {
+				if(strncmp(argBuffer, "..", 2) == 0) {
+					chdir("..");
+					continue;
+				}
+				else if(chdir(argBuffer) < 0) {
+					perror("cd error");
+					continue;
+				}
+
+			} else if(strncmp(commandBuffer, "./", 2) == 0) {
+				line[strlen(line) - 1] = '\0';
+				if(system(line) < 0)
+					perror("Custom User Call problem");
+				}
+			else {
+
+			}
+	}
+
+	return 0;
+}

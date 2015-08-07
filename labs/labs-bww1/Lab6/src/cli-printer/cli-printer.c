@@ -1,0 +1,103 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <assert.h>
+#include <string.h>
+#include <semaphore.h>
+#include <argp.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
+#include "print_server_client.h"
+
+
+const char *argp_program_version = "ISU CprE308 Print Client 0.1";
+
+const char *argp_help_info = "Help string, this is supposed to be helpful to you.";
+
+const char *argp_usage_info = "You can either send a job or get a list of drivers";
+
+static char doc[] = "Print Client";
+
+// list of options supported
+static struct argp_option options[] = 
+{
+	{"driver", 'd', 0, 0, "Printer driver to use"},
+	{"output", 'o', 0, 0, "Name of the output file"},
+	{"description", 'D', 0, 0, "Description of this print job"},
+	{"list", 'l', 0, 0, "List all of the drivers the print server currently has installed and exit immediately"},
+	{"version", 'v', 0, 0, "Display version information and exit"},
+	{"usage", 'u', 0, 0, "Program Usage"},
+	{"help", '?', 0, 0, "Help Message"},
+	{0}
+};
+
+/// arugment structure to store the results of command line parsing
+struct arguments
+{
+	char * driver;
+	char * description;
+	char* output_file_name;
+	int list;
+};
+
+
+error_t parse_opt(int key, char *arg, struct argp_state *state)
+{
+	// the student should add the additional required arguments here
+	struct arguments *arguments = state->input;
+	switch(key)
+	{
+		case 'd':
+			arguments->driver = arg;
+			break;
+		case 'o':
+			arguments->output_file_name = arg;
+			break;
+		case '?':
+			printf(argp_help_info);
+			break;
+		case 'u':
+			printf(argp_usage_info);
+			break;
+		case 'v':
+			printf(argp_program_version);
+			break;
+		case 'D':
+			arguments->description = arg;
+			break;
+		case 'l':
+			arguments->list = 1;
+		default:
+			return ARGP_ERR_UNKNOWN;
+	}
+	return 0;
+}
+
+/// The arg parser object
+static struct argp argp = {&options, parse_opt, 0, doc};
+
+int main(int argc, char* argv[])
+{
+	struct arguments arguments;
+	arguments.list = 0;
+	arguments.output_file_name = "";
+	arguments.description = "";
+	arguments.driver = "";
+	argp_parse(&argp, argc, argv, 0, 0, &arguments);
+
+	if(arguments.list == 1) {
+		int num = 3;
+		printer_driver_t** list = printer_list_drivers(&num);
+		return 0;
+	} else {
+
+	return printer_print(NULL, arguments.driver, "cli-job", arguments.description, "DATA");
+		
+	}
+
+	
+
+}

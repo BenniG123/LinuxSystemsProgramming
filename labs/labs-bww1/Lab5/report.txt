@@ -1,0 +1,33 @@
+REPORT.txt
+
+What is the expected output?
+Identical expected sum, averages, and standard devs
+e_sum: 6846.000000	
+e_avg: 6.846000		
+e_sum: 18906.314453	
+e_std: 4.348139	
+
+What is the calculated output?
+Slightly different than the expected output due to a lack of mutex locks
+sum: 6846.000000
+avg: 6.846000
+sum: 18906.296875
+std: 4.348137
+
+What caused the discrepancy between the expected and calculated values?
+The lack of thread safe memory protections put into place
+
+Did this fix the issue with the original code?
+Yes
+e_std: 4.348139	 std: 4.348139
+
+What is the minimum number of conditions needed for the example to work as intended?
+1: A variable that is incremented when each thread accesses the queue.  When the producer see that the number is higher than the number of threads, it knows
+that starvation is occuring and can access the queue while resetting threadAccesses to 0.
+2: A variable indicating that the thread is locked or not, basically a standard mutex
+
+What would those conditions be, and which thread(producer or consumer) should wait on that condition?
+1 - The producer waits on the condition being equal to the number of consumer threads, and then the producer can fill the queue with more data
+2 - Consumer should wait on the producer to finish filling the queue with data
+
+

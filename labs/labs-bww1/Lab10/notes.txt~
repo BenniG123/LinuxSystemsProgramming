@@ -1,0 +1,16 @@
+1) . is current directory, .. is parent directory.  They are necessary to navigate through the file system.  Like a tree.
+
+2) stat -c %U secrets.bat
+
+3) chown (desired user) secrets.bat
+
+4) It gives all users read, write, and execute permissions for all files and directories in the current directory and its children
+
+5) It allowed hackers to execute commands when they are concatenated to the end of function definitions stored in the value of environment variables.
+
+6) An environment variable is a system wide value accessed by any program.  To exploit a webserver, you could modify the HTTP request string to escape the function and then
+execute malicious code contained inside the string.
+
+7) To trigger the buffer overflow, the attacker can take advantage of the missing decrement of upperLimit in the 3rd if statement.  Round quotes increase the upper limit
+of the buffer by one with every set, and the attacker can put in tons of round quotes to increase where the buffer is writing to in memory.  If we keep increasing upper limit,
+we can keep increases output index to well outside of localbuf's allocated space.

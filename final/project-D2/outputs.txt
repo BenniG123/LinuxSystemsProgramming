@@ -1,0 +1,28 @@
+Baseline Outputs
+
+FIFO Sequential:
+0%
+
+FIFO Random:
+23.6%
+
+FIFO Spatial:
+81.1%
+
+LRU Sequential:
+o%
+
+LRU Random:
+23.8%
+
+LRU Spatial:
+83.9%
+
+Clock Sequential:
+0%
+
+Clock Random:
+23.2%
+
+Clock Spatial:
+82.8%

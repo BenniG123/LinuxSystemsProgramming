@@ -1,0 +1,46 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <errno.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+
+#define SOCK_PATH "echo_socket"
+
+int main(void)
+{
+    int fd;
+	fd = shm_open("/print_job_mem", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP); // open the shared memory area creating it if it doesn't exist
+	if(!fd)
+	{
+		perror("shm_open\n");
+		return -1;
+	}
+	if(ftruncate(fd, sizeof(struct SHM_SHARED_MEMORY)))
+	{
+		perror("ftruncate\n");
+		return -1;
+	}
+	struct SHM_SHARED_MEMORY* shared_mem;
+	shared_mem = mmap(NULL, sizeof(struct SHM_SHARED_MEMORY), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+	if(!shared_mem)
+	{
+		perror("mmap\n");
+		return -1;
+	}
+	if(close(fd))
+	{
+		perror("close\n");
+		return -1;
+	}
+	
+	sem_wait(shared_mem->mutex);
+
+	strcpy(shared_mem->print_job->driver_name, driver);
+	strcpy(shared_mem->print_job->job_name, job_name);
+	strcpy(shared_mem->print_job->description, description);
+	strcpy(shared_mem->print_job->data,data);
+
+	sem_post(shared_mem->mutex);
+}

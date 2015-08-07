@@ -1,0 +1,566 @@
+/**
+ * @file      main.c
+ * @author    Jeramie Vens
+ * @date      2015-02-11: Created
+ * @date      2015-02-15: Last updated
+ * @brief     Emulate a print server system
+ * @copyright MIT License (c) 2015
+ */
+ 
+/*
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+*/
+
+// lab1: print server program as it is
+// lab2: make as a daemon, install different printer backends
+// lab3: write a kernel module that gets installed as a backend
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <pthread.h>
+#include <unistd.h>
+#include <assert.h>
+#include <string.h>
+#include <semaphore.h>
+#include <argp.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+
+#include "queue.h"
+#include "print_job.h"
+#include "printer.h"
+
+/// program version string
+const char *argp_program_version = "ISU CprE308 Print Server 0.1";
+/// program bug address string
+const char *argp_program_bug_address = "Jeramie Vens: <vens@iastate.edu>";
+/// program documentation string
+static char doc[] = "Print server -- For my class\vThis should be at the bottom";
+
+/*
+* - -?, --help: display help information and exit
+ * - -V, --version: display version information and exit
+ * - -v, --verbose: display debugging information to stderr
+ * - -q, --quiet: don't display any messages or outputs unless it is a fatal error
+ * - -o, --log-file: use the given log file to print out when jobs start and finish printing
+ * - -d, --daemon: future lab will implement this
+ * - -c, --config: future lab will implement this
+ * - -p, --printer: future lab will implement this
+ * - -n1: the number of print queue 1 printers there are (future lab will remove this)
+ * - -n2: the number of print queue 2 printers there are (future lab will remove this)
+*/
+// list of options supported
+static struct argp_option options[] = 
+{
+	{"verbose", 'v', 0, 0, "Produce verbose output"},
+	{"quiet", 'q', 0, 0, "Don't produce any output"},
+	{"silent", 's', 0, OPTION_ALIAS, 0},
+	{"log-file", 'o', "FILE", 0, "The output log file"},
+	{"version", 'V', 0, 0, "Display version information and exit"},
+	{"daemon", 'd', 0, 0, "Run print spooler as Daemon"},
+	{"config", 'c', 0, 0, "Future Lab"},
+	{"printer", 'p', 0, 0, "Future Lab"},
+	{"n1", 1,"n1", 0, "Number of print queue 1 printers"},
+	{"n2", 2, "n2", 0, "Number of print queue 2 printers"},
+	{0}
+	// The student should add aditional options here
+};
+
+/// arugment structure to store the results of command line parsing
+struct arguments
+{
+	/// Are we running as daemon?
+	int daemon;
+	/// are we in verbose mode?
+	int verbose_mode;
+	/// name of the log file
+	char* log_file_name;
+	// The student should add anything else they wish here
+	int n1;
+	int n2;
+};
+
+/**
+ * @brief     Callback to parse a command line argument
+ * @param     key
+ *                 The short code key of this argument
+ * @param     arg
+ *                 The argument following the code
+ * @param     state
+ *                 The state of the arg parser state machine
+ * @return    0 if succesfully handeled the key, ARGP_ERR_UNKONWN if the key was uknown
+ */
+error_t parse_opt(int key, char *arg, struct argp_state *state)
+{
+	// the student should add the additional required arguments here
+	struct arguments *arguments = state->input;
+	switch(key)
+	{
+		case 'v':
+			arguments->verbose_mode = 2;
+			break;
+		case 'q':
+			arguments->verbose_mode = 0;
+			break;
+		case 'o':
+			arguments->log_file_name = arg;
+			break;
+		case 'V':
+			printf(argp_program_version);
+			break;
+		case 'd':
+			arguments->daemon = 1;
+			break;
+		case 'c':
+			break;
+		case 'p':
+			break;
+		case 1:
+			arguments->n1 = atoi(arg);
+			break;
+		case 2:
+			arguments->n2 = atoi(arg);
+			break;
+		default:
+			return ARGP_ERR_UNKNOWN;
+	}
+	return 0;
+}
+
+/// The arg parser object
+static struct argp argp = {&options, parse_opt, 0, doc};
+
+/// Parameters to pass to the print spooler thread
+struct PRINTER_SPOOLER_PARAM
+{
+	/// The print queue that this spooler can pull off of
+	queue_t print_queue_list;
+	/// The printer that this spooler can print to
+	printer_t printer_driver;
+	/// The log file name
+	char * log_file_name;
+};
+
+/**
+ * @brief     This thread represents a print spooler which directly talks to a single printer
+ * @param     param
+ *                 The PRINT_SPOOL_PARAM this printer should pull its jobs from, casted to a void*
+ * @return    NULL
+ *
+ * This function should loop forever.  The basic process is as follows:
+ * 1) pop a print job from this threads queue
+ * 2) if it is NULL return
+ * 3) print to the log file that printing of the job is starting
+ * 4) call the print method on the printer object of the param and check the return
+ * 5) handle errors correctly
+ * 6) the print job and get the next
+ */
+void *printer_spooler(void* param)
+{
+	// The student should fill in all of this function
+	struct PRINTER_SPOOLER_PARAM* input = param;
+	queue_ends_t direction = QUEUE_TAIL;
+
+	while(1) {
+
+		print_job_t* next = queue_pop(input->print_queue_list, direction);
+
+		if(next == NULL) {
+			return NULL;
+		}
+
+		//Print to the log file
+		FILE *f = fopen(input->log_file_name, "w");
+  		fprintf (f, "Starting printing %s\n", print_job_tostring(next));
+		fclose(f);
+
+		//Call the print method on the printer object of the param and check the return
+		if(input->printer_driver->print(input->printer_driver, next) < 0) {
+			perror("print error");
+			return NULL;
+		}
+
+		if(print_job_destroy(next) < 0) {
+			perror("print job destroy error");
+			return NULL;
+		}
+	}
+	return NULL;
+}
+
+void *driver_returner(void* param) {
+
+	int fd, i;
+	char *myfifo = "/tmp/printer_driver_fifo";
+	char input[80];
+	char buf[100];
+
+	/* create the FIFO (named pipe) */
+	mkfifo(myfifo, 0666);
+
+	struct arguments* a = param;
+
+	fd = open(myfifo, O_RDWR);
+	
+	while(1) {
+    		if(read(fd, buf, 100) == 0) {
+			//buf[0] = '\0';
+		} else {
+			if(strncmp(buf, "list", 4) == 0) {
+
+				printf("Sending driver list\n");
+
+				read(fd, buf, 100);
+				long length = strtol(buf, NULL, 10);
+				printf("length = %d\n", length);
+
+				/*for(i = 0; i < length; i++) {
+					printf("sending number %d\n", i);
+					//send(myfifo, list[i]->printer_name, sizeof(char[100]));
+					//send(myfifo, list[i]->driver_name, sizeof(char[100]));
+					//send(myfifo, list[i]->driver_version, sizeof(char[100]));
+					printf("sent number %d\n", i);
+				}*/
+			}
+		}
+	}
+
+}
+
+
+
+/**
+ * @brief     A print server program
+ * This program shall take postscript files with some special header information from stdin
+ * and print them to a printer device.  For Lab 5 the only printer device you need to support
+ * is the pdf_printer provided.  Keep in mind that in future labs you will be expected to
+ * support additional printers, so keep your code modular.  All printers will support the
+ * API shown in printer.h.  
+ *
+ * The program should take a number of command line arguments.  At a minimum the following
+ * should be supported:
+ * - -?, --help: display help information and exit
+ * - -V, --version: display version information and exit
+ * - -v, --verbose: display debugging information to stderr
+ * - -q, --quiet: don't display any messages or outputs unless it is a fatal error
+ * - -o, --log-file: use the given log file to print out when jobs start and finish printing
+ * - -d, --daemon: future lab will implement this
+ * - -c, --config: future lab will implement this
+ * - -p, --printer: future lab will implement this
+ * - -n1: the number of print queue 1 printers there are (future lab will remove this)
+ * - -n2: the number of print queue 2 printers there are (future lab will remove this)
+ *
+ * The syntax of the postscrip file is as follows.  The file will be supplied through stdin for
+ * this lab.  A future lab will change this to a different location, so keep in mind modularity
+ * as you go.  Each job will start with header information.  Each line of header information
+ * will start with a `#` followed by a keyword and an `=` sign.  You must support at minimum
+ * the following commands
+ * - #name=: The name of the print job.
+ * - #driver=: The driver to print the job to.  For Lab 5 this will be either "pdf1" or "pdf2".
+ * - #description=: A discription of the print job which will be included in the log file
+ * After all of the header information will be a line starting with a `%`.  Any line following
+ * from that line to the line containing `%EOF` should be interpreted as raw postscript data.
+ * It should therefore all be copied into the `print_job->file` file.
+ *
+ * After the `%EOF` has been found a new header may begin for the next file, or if the program
+ * is finished `#exit` will be supplied.
+ *
+ * The flow of the program should be as follows:
+ * -# parse command line arguments
+ * -# create two print queues using the `queue_create()` function
+ * -# install n1 pdf_printer drivers called "pdf1-%d" and n2 pdf_printer drivers called "pdf2-%d"
+ * -# create n1+n2 spooler param objects: the first n1 with one of the print queues and all the n1
+ *    drivers, and the other n2 with the other print queue and all the n2 drivers
+ * -# create n1+n2 spooler threads
+ * -# create a new print job using `print_job_create()`
+ * -# parse stdin to build the print job
+ * -# all postscript data should be appended to the `print_job->file` file
+ * -# when the entire job has been read the `print_job->file` file should be closed
+ * -# push the print job onto the correct print queue (if the driver was pdf1 or pdf2)
+ * -# parse the next print job
+ * -# when `#exit` is recieved make sure to release all threads and join them
+ * -# free all resources and exit
+ *
+ * When the program is run with valgrind it should not have ANY memory leaks.  The program
+ * should also never cause a segfault for any input or reason.
+ */
+int main(int argc, char* argv[])
+{
+	// parse arguments.  Look at the man pages and section 25.3 of the GNU libc manual
+	// found at https://www.gnu.org/software/libc/manual/pdf/libc.pdf for more information
+	// on how to use argp to parse arguments.  An example is shown below to get you started
+	struct arguments arguments;
+	arguments.n1 = 0;
+	arguments.n2 = 0;
+	arguments.verbose_mode = 1;
+	arguments.daemon = 0;
+	arguments.log_file_name = "";
+	argp_parse(&argp, argc, argv, 0, 0, &arguments);
+
+	if(arguments.daemon == 1) {
+		if(daemon(1,1) < 0) {
+			perror("Daemon error:");
+			exit(1);
+		}
+	}
+	
+	pthread_t thread;
+	int err = pthread_create(&thread, NULL, driver_returner, (void *)&arguments);
+	
+	/*queue_t queue_n1 = queue_create();
+	queue_t queue_n2 = queue_create();
+
+
+	int i;
+	
+	//Array of print drivers
+	printer_t * print_drivers_n1;
+	print_drivers_n1 = malloc(arguments.n1 * sizeof(printer_t));
+	
+	printer_t * print_drivers_n2;
+	print_drivers_n2 = malloc(arguments.n2 * sizeof(printer_t));
+
+	
+	//Install n1 drivers
+	for(i = 0; i < arguments.n1; i++) {
+		char name[8];
+		sprintf(name, "pdf1-%d", i);
+		print_drivers_n1[i] = printer_install(NULL,name);
+	}
+
+	
+	//Install n2 drivers
+	for(i = 0; i < arguments.n2; i++) {
+		char name[8];
+		sprintf(name, "pdf2-%d", i);
+		print_drivers_n2[i] = printer_install(NULL,name);
+	}
+
+	struct PRINTER_SPOOLER_PARAM * n1_params;
+	n1_params = malloc(arguments.n1 * sizeof(struct PRINTER_SPOOLER_PARAM));
+
+	struct PRINTER_SPOOLER_PARAM * n2_params;
+	n2_params = malloc(arguments.n2 * sizeof(struct PRINTER_SPOOLER_PARAM));
+
+	//Create n1 spool params
+	for(i = 0; i < arguments.n1; i++) {
+		n1_params[i].print_queue_list = queue_n1;
+		n1_params[i].printer_driver = print_drivers_n1[i];
+		n1_params[i].log_file_name = arguments.log_file_name;
+		
+	}
+
+	
+	//Create n2 spool params
+	for(i = 0; i < arguments.n2; i++) {
+		n2_params[i].print_queue_list = queue_n2;
+		n2_params[i].printer_driver = print_drivers_n2[i];
+		n2_params[i].log_file_name = arguments.log_file_name;
+	}
+
+	pthread_t * n1_threads;
+	n1_threads = malloc(arguments.n1 * sizeof(pthread_t));
+
+	pthread_t * n2_threads;
+	n2_threads = malloc(arguments.n2 * sizeof(pthread_t));
+
+	int err;
+
+	//Create n1 spool threads
+	for(i = 0; i < arguments.n1; i++) {
+		err = pthread_create(&n1_threads[i], NULL, printer_spooler, (void *)&n1_params[i]);
+		if(err != 0){
+			errno = err;
+			perror("pthread_create");
+			exit(1);
+		}
+	}
+	
+	//Create n2 spool threads
+	for(i = 0; i < arguments.n2; i++) {
+		err = pthread_create(&n2_threads[i], NULL, printer_spooler, (void *)&n2_params[i]);
+		if(err != 0){
+			errno = err;
+			perror("pthread_create");
+			exit(1);
+		}
+	}*/
+
+	while(1) {
+	
+		//Create a print job
+		//print_job_t * new_job = print_job_create();
+
+		//char print_file[1024];
+
+		//Parse stdin to get info about the file
+		//scanf("%s", print_file);
+		
+		int fd;
+		fd = shm_open("/print_job_mem", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR | S_IRGRP); // open the shared memory area creating it if it doesn't exist
+		if(!fd)
+		{
+			perror("shm_open\n");
+			return -1;
+		}
+		if(ftruncate(fd, sizeof(struct PRINT_JOB_STRUCT)))
+		{
+			perror("ftruncate\n");
+			return -1;
+		}
+		struct PRINT_JOB_STRUCT* shared_mem;
+		shared_mem = mmap(NULL, sizeof(struct PRINT_JOB_STRUCT), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+		if(!shared_mem)
+		{
+			perror("mmap\n");
+			return -1;
+		}
+		if(close(fd))
+		{
+			perror("close\n");
+			return -1;
+		}
+		if(sem_unlink("/driver_mutex") < 0) {
+			perror("Destroy Semaphore error:");
+		}
+
+		//
+		sem_t * semaphore = sem_open("/driver_mutex", O_CREAT, 0666, 0);
+		if(semaphore == SEM_FAILED) {
+			perror("Constructing Semaphore");
+			exit(1);
+		}
+		printf("Created named semaphore\n");
+		while(1) {
+			sem_wait(semaphore);
+
+			printf("Driver Name: %s\n", shared_mem->driver_name);
+			printf("Job Name: %s\n", shared_mem->job_name);
+			printf("Description: %s\n", shared_mem->description);
+			//printf("Data: %s\n",shared_mem->data);
+		}
+		sem_close(semaphore);	
+	
+		/*printf("%s\n", print_file);
+
+		//Check if we should exit
+		if(strncmp(print_file, "#exit", 5) == 0) {
+			//Exit the whole thing
+			break;
+		}
+
+		FILE * pf = fopen(print_file, "r");
+		
+		printf("check8\n");
+
+		char line[80];
+		int i;
+		int postscript = 0;
+		//Parse in postscript
+
+		while(fgets(line, 80, pf) != NULL) {
+			//printf("%s", line);
+			if(line[0] == '#' && postscript == 0) {
+				//printf("%d\n", strlen(line));
+				if(strncmp(line, "#name=", 6) == 0) {
+					new_job->job_name = malloc((strlen(line) - 6) * sizeof(char));
+					i = 7;
+					while(line[i] != '\n') {
+						new_job->job_name[i-7] = line[i];
+						i++;
+					}
+				}
+				else if(strncmp(line, "#driver=", 7) == 0) {
+
+					new_job->driver_name = malloc((strlen(line) - 7) * sizeof(char));
+
+					i = 8;
+					while(line[i] != '\n') {
+						new_job->driver_name[i-8] = line[i];
+						i++;
+					}
+
+					printf("driver name = %s\n", new_job->driver_name);
+				}
+				else if(strncmp(line, "#description=", 13) == 0) {
+
+					new_job->description = malloc((strlen(line) - 13) * sizeof(char));
+
+					i = 14;
+					while(line[i] != '\n') {
+						new_job->description[i-14] = line[i];
+						i++;
+					}
+
+				}
+				else if(strncmp(line, "#exit", 13) == 0) {
+
+					new_job->description = malloc((strlen(line) - 13) * sizeof(char));
+
+					i = 14;
+					while(line[i] != '\n') {
+						new_job->description[i-14] = line[i];
+						i++;
+					}
+
+				}
+			}
+			else if(line[0] == '%' && postscript == 0) {
+				postscript = 1;
+			}
+			else if(postscript == 1) {
+				if(strncmp(line, "%EOF", 4) == 0) {
+					printf("check9\n");
+					if(fclose(new_job->file) < 0) {
+						perror("fclose error");
+						return 0;
+					}
+					break;
+				} else {
+					fprintf(new_job->file, "%s", line);
+				}
+			}
+		}
+
+		//Push to the correct queue
+		if(strncmp(new_job->driver_name, "pdf1", 4) == 0) {
+			queue_push(queue_n1, new_job, QUEUE_HEAD);
+		} else if(strncmp(new_job->driver_name, "pdf2", 4) == 0) {
+			queue_push(queue_n2, new_job, QUEUE_HEAD);
+		}
+
+		free(new_job);*/
+
+	}
+
+	/*queue_release_threads(queue_n1, arguments.n1);
+	queue_release_threads(queue_n2, arguments.n2);
+
+	//Deallocate all our memory, join all threads
+	for(i = 0; i < arguments.n1; i++) {
+		if(pthread_join(n1_threads[i], NULL) != 0) {
+			perror("Thread join error");
+			return 0;
+		}
+	}
+
+	for(i = 0; i < arguments.n2; i++) {
+		if(pthread_join(n2_threads[i], NULL) != 0) {
+			perror("Thread join error");
+			return 0;
+		}
+	}
+
+	queue_destroy(queue_n1);
+	queue_destroy(queue_n2);*/
+	return 0;
+}
+
+
+

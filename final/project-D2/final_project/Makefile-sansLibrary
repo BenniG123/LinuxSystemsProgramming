@@ -1,0 +1,23 @@
+NETID := $(shell whoami)
+
+EXES=main
+OBJS=final.o ourStats.o internal.o
+CFLAGS=-D NETID=\"$(NETID)\"  -D_GNU_SOURCE
+DEBUG=-g -Wall
+
+all: $(EXES)
+
+main: $(OBJS)
+	gcc -o main $^ -lm -lrt -pthread $(DEBUG)
+
+%.o: %.c *.h
+	gcc -c $< $(CFLAGS) $(DEBUG)
+
+doc: 
+	doxygen
+
+clean:
+	rm -rf *.o
+	rm -rf $(EXES)
+	
+.PHONY: doc
